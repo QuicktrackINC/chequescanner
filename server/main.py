@@ -503,18 +503,23 @@ async def _process_batch_in_background(
     """
     import asyncio
     
-    CHUNK_SIZE = 5
+    CHUNK_SIZE = 10
     chunks = [check_images[i:i + CHUNK_SIZE] for i in range(0, len(check_images), CHUNK_SIZE)]
     
+    # Use a Semaphore to limit concurrency (e.g., 5 parallel chunks)
+    # This prevents the server from running out of RAM/CPU by processing 100+ images at once.
+    sem = asyncio.Semaphore(5)
+    
     async def _sem_process_chunk(chunk, index: int):
-        # Using the GLOBAL gemini_lock to ensure all uploads across the system
-        # wait in a single-file line for AI processing.
-        async with gemini_lock:
+        async with sem:
             max_db_retries = 2
             for db_attempt in range(max_db_retries):
                 try:
+                    # Note: We use the local db session inside the chunk to avoid session conflicts
                     with SessionLocal() as db:
-                        return await _process_check_chunk(chunk, batch_id, table_data, db)
+                        res = await _process_check_chunk(chunk, batch_id, table_data, db)
+                        logger.info(f"Chunk {index+1}/{len(chunks)} complete.")
+                        return res
                 except Exception as db_err:
                     if "SSL connection" in str(db_err) and db_attempt < max_db_retries -1:
                         logger.warning(f"DB SSL Connection reset for chunk {index}, retrying...")
@@ -523,26 +528,12 @@ async def _process_batch_in_background(
                         logger.error(f"Fatal DB Error for chunk {index}: {str(db_err)}")
                         raise
 
-    logger.info(f"Background processing started for {len(check_images)} checks (grouped into {len(chunks)} chunks of {CHUNK_SIZE}) on batch {batch_id}")
+    logger.info(f"Background processing (PAID TIER) started for {len(check_images)} checks on batch {batch_id}")
     
-    # Process chunks sequentially to STRICTLY adhere to Gemini Free tier RPM limits.
-    # Parallel attempts (gather) were triggering bursts that hit 429s.
-    results = []
-    for i, c in enumerate(chunks):
-        try:
-            res = await _sem_process_chunk(c, i)
-            results.append(res)
-        except Exception as e:
-            logger.error(f"Chunk {i} failed: {e}")
-            results.append(e)
-        
-        # Mandatory cool-down between chunks.
-        # This keeps us well under the 15 RPM ceiling even if Smart AI fallbacks are triggered.
-        import random
-        wait_time = random.uniform(3, 6)
-        if i < len(chunks) - 1:
-            logger.info(f"Chunk {i+1}/{len(chunks)} complete. Cooling down for {wait_time:.1f}s...")
-            await asyncio.sleep(wait_time)
+    # Process all chunks in parallel (limited by Semaphore)
+    tasks = [_sem_process_chunk(c, i) for i, c in enumerate(chunks)]
+    await asyncio.gather(*tasks)
+
 
 
     # Final status update
