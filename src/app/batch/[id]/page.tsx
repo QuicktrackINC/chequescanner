@@ -25,7 +25,6 @@ import {
   FileText,
   Pencil,
   Keyboard,
-  CheckSquare,
   History,
   RefreshCw,
 } from "lucide-react";
@@ -62,7 +61,7 @@ interface AuditLog {
   id: number;
   user: string;
   action: string;
-  changes: Record<string, { old: any, new: any }>;
+  changes: Record<string, { old: unknown, new: unknown }>;
   created_at: string;
 }
 
@@ -256,7 +255,7 @@ export default function ReviewPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingChecks, currentIndex, editForm]);
 
-  const AUTO_APPROVE_THRESHOLD = 0.9; // 90% confidence
+
 
 
   const handleSave = useCallback(async (status: CheckStatus, form = editForm) => {

@@ -22,6 +22,7 @@ Detailed documentation has been separated into their designated domains:
 
 - 📖 **[User Guide](./docs/user_guide.md)** — Step-by-step instructions on how to use the CPS system (Uploads, Reviewing, Exporting).
 - 🏗️ **[Architecture Overview](./docs/architecture.md)** — High-level details on the Next.js Frontend, FastAPI Backend, and the AI Pipeline.
+- 🔑 **[Doppler Setup Guide](./docs/doppler.md)** — Guide on integrating Doppler secrets manager for local development.
 
 ---
 

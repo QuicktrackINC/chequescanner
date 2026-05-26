@@ -90,8 +90,9 @@ export default function UsersPage() {
 
       const data = await res.json();
       setUsers(data.users || []);
-    } catch (err: any) {
-      toast.error(err.message || "Failed to load users");
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : "Failed to load users";
+      toast.error(errorMsg);
     } finally {
       setLoading(false);
     }
@@ -111,11 +112,11 @@ export default function UsersPage() {
     try {
       const url = editingUserId ? `/api/users/${editingUserId}` : "/api/users";
       const method = editingUserId ? "PUT" : "POST";
-      const body = { ...formData };
+      const body: { username: string; password?: string; role: string } = { ...formData };
       
       // Don't send empty password if editing (means don't change it)
       if (editingUserId && !body.password) {
-          delete (body as any).password;
+          delete body.password;
       }
 
       const res = await fetch(url, {
@@ -137,8 +138,9 @@ export default function UsersPage() {
       setEditingUserId(null);
       setFormData({ username: "", password: "", role: "REVIEWER" });
       fetchUsers();
-    } catch (err: any) {
-      toast.error(err.message);
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : "Failed to save user";
+      toast.error(errorMsg);
     }
   };
 
@@ -157,8 +159,9 @@ export default function UsersPage() {
 
       toast.success("User deleted");
       fetchUsers();
-    } catch (err: any) {
-      toast.error(err.message);
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : "Failed to delete user";
+      toast.error(errorMsg);
     }
   };
 

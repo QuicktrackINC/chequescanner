@@ -13,7 +13,6 @@ import {
   AlertCircle,
   CheckCircle2,
   Loader2,
-  Image as ImageIcon,
   Check,
   Table as TableIcon,
 } from "lucide-react";
@@ -39,9 +38,7 @@ export default function UploadPage() {
   const router = useRouter();
   const [file, setFile] = useState<File | null>(null);
   const [phase, setPhase] = useState<UploadPhase>("idle");
-  const [progress, setProgress] = useState({ current: 0, total: 0 });
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [batchId, setBatchId] = useState<number | null>(null);
   const [totalChecks, setTotalChecks] = useState(0);
   const [tablePages, setTablePages] = useState("");
   const [checkPages, setCheckPages] = useState("");
@@ -156,7 +153,6 @@ export default function UploadPage() {
       }
 
       const data = await res.json();
-      setBatchId(data.batch_id);
       setTotalChecks(data.total_checks);
       setPhase("done");
 

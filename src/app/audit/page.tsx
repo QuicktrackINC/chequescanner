@@ -29,7 +29,7 @@ interface GlobalAuditLog {
   batch_id: number;
   user: string;
   action: string;
-  changes: Record<string, { old: any; new: any }>;
+  changes: Record<string, { old: unknown; new: unknown }>;
   created_at: string;
 }
 
@@ -83,8 +83,9 @@ export default function AuditLogsPage() {
 
       const data = await res.json();
       setLogs(data.logs || []);
-    } catch (err: any) {
-      toast.error(err.message || "Failed to load audit logs");
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : "Failed to load audit logs";
+      toast.error(errorMsg);
     } finally {
       setLoading(false);
     }

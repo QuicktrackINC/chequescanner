@@ -196,7 +196,7 @@ export default function Dashboard() {
       if (silent) setRefreshing(false);
       else setLoading(false);
     }
-  }, [getAuthRole, getAuthToken, statusFilter, dateFilter, searchQuery, toast]);
+  }, [getAuthRole, getAuthToken, statusFilter, dateFilter, searchQuery, toast, router]);
 
   useEffect(() => {
     setMounted(true);

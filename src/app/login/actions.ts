@@ -3,6 +3,11 @@
 import { cookies } from 'next/headers'
 import { redirect } from 'next/navigation'
 
+interface LoginResponse {
+  access_token: string
+  role: string
+}
+
 export async function login(formData: FormData) {
   const username = formData.get('username') as string
   const password = formData.get('password') as string
@@ -12,7 +17,7 @@ export async function login(formData: FormData) {
     : 'http://127.0.0.1:8000'
   
   let success = false
-  let data: any = null
+  let data: LoginResponse | null = null
 
   try {
     const res = await fetch(`${apiUrl}/api/auth/login`, {
