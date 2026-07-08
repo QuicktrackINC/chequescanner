@@ -139,7 +139,7 @@ async def startup_event():
                 with SessionLocal() as db:
                     if db.query(User).count() == 0:
                         pw_hash = get_password_hash("Quicktrackinc@2026!")
-                        admin_user = User(username="admin", password_hash=pw_hash, role="ADMIN")
+                        admin_user = User(id="admin", email="admin@quicktrack.com", passwordHash=pw_hash, role="ADMIN")
                         db.add(admin_user)
                         db.commit()
                         logger.info('"Default admin user created."')
@@ -1126,11 +1126,11 @@ def download_batch_csv(batch_id: int, user: dict = Depends(get_current_user), db
 @app.post("/api/auth/login")
 async def login(req: LoginRequest, db: Session = Depends(get_db)):
     """Verifies user credentials and returns a JWT."""
-    user = db.query(User).filter(User.username == req.username).first()
-    if not user or not verify_password(req.password, user.password_hash):
+    user = db.query(User).filter(User.email == req.username).first()
+    if not user or not verify_password(req.password, user.passwordHash):
         raise HTTPException(status_code=401, detail="Invalid username or password")
     
-    token = create_access_token(data={"sub": user.username})
+    token = create_access_token(data={"sub": user.email})
     return {"access_token": token, "token_type": "bearer", "role": user.role}
 
 @app.get("/api/users")
@@ -1139,19 +1139,20 @@ async def get_users(db: Session = Depends(get_db), current_user: dict = Depends(
     if current_user.get("role") != "ADMIN":
         raise HTTPException(status_code=403, detail="Only Admins can view users.")
     users = db.query(User).all()
-    return {"users": [{"id": u.id, "username": u.username, "role": u.role, "created_at": u.created_at.replace(tzinfo=timezone.utc).isoformat() if u.created_at else None} for u in users]}
+    return {"users": [{"id": u.id, "username": u.email, "role": u.role, "created_at": u.createdAt.replace(tzinfo=timezone.utc).isoformat() if u.createdAt else None} for u in users]}
 
 @app.post("/api/users")
 async def create_user(req: UserCreate, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     """Create a new user (Admins only)."""
     if current_user.get("role") != "ADMIN":
         raise HTTPException(status_code=403, detail="Only Admins can create users.")
-    if db.query(User).filter(User.username == req.username).first():
+    if db.query(User).filter(User.email == req.username).first():
         raise HTTPException(status_code=400, detail="Username already exists")
     
     new_user = User(
-        username=req.username,
-        password_hash=get_password_hash(req.password),
+        id=req.username,
+        email=req.username,
+        passwordHash=get_password_hash(req.password),
         role=req.role.upper()
     )
     db.add(new_user)
@@ -1174,7 +1175,7 @@ async def update_user(user_id: int, req: UserUpdate, db: Session = Depends(get_d
             raise HTTPException(status_code=400, detail="Cannot downgrade the last Admin.")
     
     if req.password:
-        user.password_hash = get_password_hash(req.password)
+        user.passwordHash = get_password_hash(req.password)
     if req.role:
         user.role = req.role.upper()
         

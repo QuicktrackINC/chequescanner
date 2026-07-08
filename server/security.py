@@ -85,11 +85,11 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Security(securi
         if not email:
             raise HTTPException(status_code=400, detail="Email missing in SSO token")
             
-        user = db.query(User).filter(User.username == email).first()
+        user = db.query(User).filter(User.email == email).first()
         if not user:
             raise HTTPException(status_code=403, detail="Account not linked. Access denied.")
             
-        return {"user_id": user.id, "username": user.username, "role": user.role}
+        return {"user_id": user.id, "username": user.email, "role": user.role}
     except jwt.PyJWTError:
         pass
 
@@ -105,11 +105,11 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Security(securi
         if not email:
             raise HTTPException(status_code=400, detail="Email missing in SSO token")
             
-        user = db.query(User).filter(User.username == email).first()
+        user = db.query(User).filter(User.email == email).first()
         if not user:
             raise HTTPException(status_code=403, detail="Account not linked. Access denied.")
             
-        return {"user_id": user.id, "username": user.username, "role": user.role}
+        return {"user_id": user.id, "username": user.email, "role": user.role}
     except jwt.PyJWTError:
         pass
 
@@ -122,8 +122,8 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Security(securi
     except jwt.PyJWTError:
         raise HTTPException(status_code=401, detail="Could not validate credentials")
     
-    user = db.query(User).filter(User.username == username).first()
+    user = db.query(User).filter(User.email == username).first()
     if user is None:
-        raise HTTPException(status_code=404, detail="User not found")
+        raise HTTPException(status_code=401, detail="User not found")
         
-    return {"user_id": user.id, "username": user.username, "role": user.role}
+    return {"user_id": user.id, "username": user.email, "role": user.role}
