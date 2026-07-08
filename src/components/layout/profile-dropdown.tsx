@@ -24,7 +24,7 @@ export function ProfileDropdown({ logoutAction }: { logoutAction: string | ((for
       if (match) {
         const payload = JSON.parse(atob(match[2].split('.')[1]));
         setUser({
-          username: payload.sub || payload.username || "User",
+          username: payload.name || payload.email || payload.username || "User",
           email: payload.email || "",
           role: roleMatch ? decodeURIComponent(roleMatch[2]) : "User"
         });
