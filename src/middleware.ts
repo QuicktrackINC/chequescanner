@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
+import { jwtVerify } from 'jose'
 
 // ─── Rate Limiting (in-memory, per-IP) ────────────────────────────────
 const loginAttempts = new Map<string, { count: number; lockedUntil: number }>();
@@ -9,8 +10,8 @@ const LOCKOUT_MS = 15 * 60 * 1000; // 15 minutes
 // ─── Session timeout ──────────────────────────────────────────────────
 const SESSION_TIMEOUT_MS = 60 * 60 * 1000; // 60 minutes
 
-export function middleware(request: NextRequest) {
-  const { pathname } = request.nextUrl;
+export async function middleware(request: NextRequest) {
+  const { pathname, searchParams } = request.nextUrl;
 
   // Ignore Next.js internals, static assets, favicon
   if (
@@ -92,11 +93,12 @@ export function middleware(request: NextRequest) {
     secure: process.env.NODE_ENV === 'production',
     sameSite: 'lax',
     maxAge: 60 * 60 * 2, // 2 hours
+    path: '/',
   });
 
   return response;
 }
 
 export const config = {
-  matcher: ['/((?!api|_next/static|_next/image|favicon.ico).*)'],
+  matcher: ['/((?!api|sso-login|_next/static|_next/image|favicon.ico).*)'],
 };

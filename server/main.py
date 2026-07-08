@@ -60,6 +60,9 @@ class UserUpdate(BaseModel):
 # ── App ────────────────────────────────────────────────────────────────────────
 app = FastAPI(title="Quick Track Check System")
 
+from .internal_assistant import router as internal_assistant_router
+app.include_router(internal_assistant_router)
+
 # Global Lock for Gemini Processing (Free Tier 15 RPM limit)
 # Moving this to global scope ensures that even multiple simultaneous uploads
 # wait in a single sequential line, preventing 429 "Resource Exhausted" errors.
@@ -186,14 +189,21 @@ try:
         os.makedirs(UPLOAD_DIR, exist_ok=True)
     logger.info(f'"Upload directory verified at: {UPLOAD_DIR}"')
 except Exception as e:
-    UPLOAD_DIR = os.path.join(BASE_DIR, "public", "uploads")
+    # On Vercel, the filesystem is read-only except for /tmp
+    if os.getenv("VERCEL"):
+        UPLOAD_DIR = "/tmp/uploads"
+    else:
+        UPLOAD_DIR = os.path.join(BASE_DIR, "public", "uploads")
     os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 # Ensure statements directory exists for PDF persistence
 STATEMENTS_DIR = os.path.join(UPLOAD_DIR, "statements")
 os.makedirs(STATEMENTS_DIR, exist_ok=True)
 
-app.mount("/api/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
+try:
+    app.mount("/api/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
+except RuntimeError:
+    pass # Ignore StaticFiles error if directory is weird on Vercel
 
 
 @app.get("/api/public/debug-db")
@@ -375,14 +385,15 @@ async def _process_check_chunk(
             def _is_empty(v): return v is None or (isinstance(v, str) and str(v).strip() == "") or v == 0
             key_fields = [extracted_data.get(k) for k in ["store_name", "payee_name", "amount", "check_number"]]
             if all(_is_empty(f) for f in key_fields):
-                logger.info(f"Skipping empty record for {filename} — all key fields blank.")
-                final_results.append({"status": "SKIPPED", "filename": filename, "reason": "empty_record"})
-                continue
-            
-            status_str, notes = validate_extracted_check_data(extracted_data)
-            # Incorporate AI provider warnings (e.g. Fallback notifications) into the validation notes
-            if extracted_data.get("status_warning"):
-                notes = f"{extracted_data['status_warning']} | {notes}" if notes else extracted_data['status_warning']
+                logger.info(f"Empty record for {filename} — marking as MANUAL_REVIEW.")
+                status_str = "MANUAL_REVIEW"
+                notes = "AI returned empty record. Manual review required."
+                extracted_data["skip_repair"] = True # No routing to repair
+            else:
+                status_str, notes = validate_extracted_check_data(extracted_data)
+                # Incorporate AI provider warnings (e.g. Fallback notifications) into the validation notes
+                if extracted_data.get("status_warning"):
+                    notes = f"{extracted_data['status_warning']} | {notes}" if notes else extracted_data['status_warning']
         else:
             status_str = "MANUAL_REVIEW"
             notes = extracted_data.get("validation_notes")
@@ -660,15 +671,24 @@ async def upload_pdf_batch(
 
     logger.info(f'"Batch created: id={batch_id} by={user["username"]}, PDF saved to {pdf_path}"')
 
-    # 4. Start background processing
-    background_tasks.add_task(_process_batch_in_background, check_images, batch_id, table_data)
-
-    return {
-        "batch_id": batch_id,
-        "total_checks": len(check_images),
-        "status": "PROCESSING",
-        "message": "Check extraction started in background."
-    }
+    # 4. Start processing
+    if os.getenv("VERCEL") == "1":
+        logger.info("Vercel detected: Running batch processing synchronously to avoid timeout kills.")
+        await _process_batch_in_background(check_images, batch_id, table_data)
+        return {
+            "batch_id": batch_id,
+            "total_checks": len(check_images),
+            "status": "EXTRACTED",
+            "message": "Check extraction completed synchronously."
+        }
+    else:
+        background_tasks.add_task(_process_batch_in_background, check_images, batch_id, table_data)
+        return {
+            "batch_id": batch_id,
+            "total_checks": len(check_images),
+            "status": "PROCESSING",
+            "message": "Check extraction started in background."
+        }
 
 
 @app.post("/api/checks/batches/{batch_id}/resume")
@@ -720,13 +740,21 @@ async def resume_batch_endpoint(
     batch.status = CheckStatus.PENDING
     db.commit()
     
-    background_tasks.add_task(_process_batch_in_background, check_images, batch_id, table_data)
-    
-    return {
-        "status": "RESUMED",
-        "batch_id": batch_id,
-        "total_checks": len(check_images)
-    }
+    if os.getenv("VERCEL") == "1":
+        logger.info("Vercel detected: Running batch processing synchronously to avoid timeout kills.")
+        await _process_batch_in_background(check_images, batch_id, table_data)
+        return {
+            "status": "RESUMED_AND_COMPLETED",
+            "batch_id": batch_id,
+            "total_checks": len(check_images)
+        }
+    else:
+        background_tasks.add_task(_process_batch_in_background, check_images, batch_id, table_data)
+        return {
+            "status": "RESUMED",
+            "batch_id": batch_id,
+            "total_checks": len(check_images)
+        }
 
 # ── Batches ────────────────────────────────────────────────────────────────────
 @app.get("/api/checks/batches")

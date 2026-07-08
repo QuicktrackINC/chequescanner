@@ -4,7 +4,6 @@ Extracts signed check images from bank statement PDFs.
 """
 import io
 import fitz  # PyMuPDF
-import numpy as np
 from PIL import Image, ImageFilter, ImageOps
 from typing import List, Tuple, Optional
 import re
@@ -21,90 +20,80 @@ def _normalize_image(img: Image.Image) -> Image.Image:
     return img.convert('L')
 
 
-def _is_signed_check(pixels: np.ndarray, W: int, H: int) -> Tuple[bool, str]:
+def _is_signed_check(img_gray: Image.Image) -> Tuple[bool, str]:
     """
     Determine if an image is a signed check with MICR values.
     Returns (True, "found") or (False, "reason for skip").
     """
+    W, H = img_gray.size
     aspect_ratio = W / H
     
-    # Check dimensions (stricter width/height for standard checks)
-    if W < 700: # Lowered from 950 to capture more varieties
+    # Check dimensions
+    if W < 700:
         return False, f"too small (W={W})"
-    if H < 180: # Lowered from 250
+    if H < 180:
         return False, f"too short (H={H})"
     if aspect_ratio < 1.7:
         return False, f"too square (AR={aspect_ratio:.2f})"
     if aspect_ratio > 3.8:
-        return False, f"too wide (AR={aspect_ratio:.2f}) - likely logo banner"
+        return False, f"too wide (AR={aspect_ratio:.2f})"
 
-    # Binary mask: text/ink pixels = 255, background = 0
-    ink_mask = (pixels < 185).astype(np.uint8) * 255
+    # Get raw bytes for fast processing
+    pixels = img_gray.tobytes()
+    total_pixels = W * H
     
-    # Global ink density - Checks are mostly white space (ink < 30%)
-    total_ink_ratio = np.sum(ink_mask > 0) / float(ink_mask.size)
+    # Count ink pixels (threshold < 185)
+    ink_count = sum(1 for p in pixels if p < 185)
+    total_ink_ratio = ink_count / float(total_pixels)
+    
     if total_ink_ratio > 0.35:
-        # Logos are very dense and high-contrast
-        return False, f"too dense ({total_ink_ratio:.1%}) - likely logo"
+        return False, f"too dense ({total_ink_ratio:.1%})"
     if total_ink_ratio < 0.001:
-        return False, f"too sparse ({total_ink_ratio:.1%}) - likely empty"
+        return False, f"too sparse ({total_ink_ratio:.1%})"
 
-    # --- Vertical Distribution Check (3-Band DNA) ---
-    # Divide into top, mid, bottom
-    top = ink_mask[:int(0.33 * H), :]
-    mid = ink_mask[int(0.33 * H):int(0.66 * H), :]
-    bot = ink_mask[int(0.66 * H):, :]
+    # --- Vertical Distribution Check ---
+    mid_start = int(0.33 * H) * W
+    mid_end = int(0.66 * H) * W
+    mid_pixels = pixels[mid_start:mid_end]
+    mid_density = sum(1 for p in mid_pixels if p < 185) / float(len(mid_pixels))
     
-    top_density = np.sum(top > 0) / float(top.size)
-    mid_density = np.sum(mid > 0) / float(mid.size)
-    bot_density = np.sum(bot > 0) / float(bot.size)
-    
-    # Checks have a sparse mid-section (payee line) compared to top/bottom
-    # Deposit slips and logos are usually more uniformly dense vertically.
     if mid_density > 0.15:
-        return False, f"middle too dense ({mid_density:.3f}) - likely deposit slip"
-    
-    # Real checks have dozens of letters and signature strokes.
-    # We measure horizontal transitions (black to white) to approximate complexity.
-    transitions = np.sum(np.diff(ink_mask.astype(np.int16), axis=1) != 0)
-    if transitions < 80: # Very lenient for clean digital PDFs
-        return False, f"too simple (transitions={transitions}) - likely logo"
+        return False, f"middle too dense ({mid_density:.3f})"
 
     # --- Specific ROI checks ---
     # Signature region: bottom-right quadrant
-    sig_roi = ink_mask[int(0.65 * H):int(0.95 * H), int(0.65 * W):int(0.98 * W)]
-    sig_ratio = np.sum(sig_roi > 0) / float(sig_roi.size)
-
-    # Bottom strip: where MICR routing/account numbers are printed
-    bottom_strip = ink_mask[int(0.85 * H):int(0.99 * H), int(0.10 * W):int(0.90 * W)]
-    bottom_strip_density = np.sum(bottom_strip > 0) / float(bottom_strip.size)
-
-    if sig_ratio < 0.008: # Natural grays might have very light ink
+    sig_y_start = int(0.65 * H)
+    sig_y_end = int(0.95 * H)
+    sig_x_start = int(0.65 * W)
+    sig_x_end = int(0.98 * W)
+    
+    sig_ink = 0
+    sig_total = (sig_y_end - sig_y_start) * (sig_x_end - sig_x_start)
+    for y in range(sig_y_start, sig_y_end):
+        row_start = y * W + sig_x_start
+        row_end = y * W + sig_x_end
+        sig_ink += sum(1 for p in pixels[row_start:row_end] if p < 185)
+        
+    sig_ratio = sig_ink / float(sig_total)
+    if sig_ratio < 0.008:
         return False, f"signature check failed ({sig_ratio:.3f})"
-    if bottom_strip_density < 0.003: # High-res digital PDFs have very thin MICR
-        return False, f"MICR strip check failed ({bottom_strip_density:.3f})"
 
-    # --- Step 3: Gradient Variance (Edginess) ---
-    # A valid check must have high variance in the bottom 15% and bottom-right quadrant.
-    def calculate_variance(region):
-        # Approximate Laplacian variance using numpy gradients
-        # dy, dx = np.gradient(region.astype(float))
-        # This measures the "sharpness" of edges
-        grad_x = np.diff(region.astype(float), axis=1)
-        grad_y = np.diff(region.astype(float), axis=0)
-        return np.var(grad_x) + np.var(grad_y)
+    # Bottom strip: MICR
+    micr_y_start = int(0.85 * H)
+    micr_y_end = int(0.99 * H)
+    micr_x_start = int(0.10 * W)
+    micr_x_end = int(0.90 * W)
     
-    bot_15 = pixels[int(0.85 * H):, :]
-    sig_quad = pixels[int(0.50 * H):, int(0.50 * W):]
-    
-    bot_variance = calculate_variance(bot_15)
-    sig_variance = calculate_variance(sig_quad)
-    
-    # Very lenient thresholds for initial non-opencv version
-    if bot_variance < 5:
-        return False, f"Edge variance too low in MICR strip ({bot_variance:.1f})"
-    if sig_variance < 3:
-        return False, f"Edge variance too low in signature quad ({sig_variance:.1f})"
+    micr_ink = 0
+    micr_total = (micr_y_end - micr_y_start) * (micr_x_end - micr_x_start)
+    for y in range(micr_y_start, micr_y_end):
+        row_start = y * W + micr_x_start
+        row_end = y * W + micr_x_end
+        micr_ink += sum(1 for p in pixels[row_start:row_end] if p < 185)
+        
+    micr_density = micr_ink / float(micr_total)
+    if micr_density < 0.003:
+        return False, f"MICR strip check failed ({micr_density:.3f})"
 
     return True, "valid check"
 
@@ -198,12 +187,15 @@ def extract_checks_from_pdf(pdf_bytes: bytes, page_indices: Optional[List[int]] 
                 img_gray = _normalize_image(img)
                 W, H = img_gray.size
 
-                pixels = np.array(img_gray)
-                mean_val = np.mean(pixels)
+                pixels = img_gray.tobytes()
+                
+                # Approximate mean_val using first 1000 pixels for speed
+                sample_pixels = pixels[:min(1000, len(pixels))]
+                mean_val = sum(sample_pixels) / len(sample_pixels) if sample_pixels else 255
 
                 # Handle inverted (black background) images
                 if mean_val < 127:
-                    pixels = 255 - pixels
+                    img_gray = ImageOps.invert(img_gray)
 
                 # --- SCAN LOGIC ---
                 if force_scan:
@@ -214,7 +206,7 @@ def extract_checks_from_pdf(pdf_bytes: bytes, page_indices: Optional[List[int]] 
                         continue
                     is_check, reason = True, "forced"
                 else:
-                    is_check, reason = _is_signed_check(pixels, W, H)
+                    is_check, reason = _is_signed_check(img_gray)
 
                 if is_check:
                     # Convert the original image to JPEG for storage
@@ -223,13 +215,15 @@ def extract_checks_from_pdf(pdf_bytes: bytes, page_indices: Optional[List[int]] 
                     
                     # If inverted, invert back for display
                     if mean_val < 127:
-                        if original_img.mode == 'L':
-                            inv_arr = 255 - np.array(original_img)
-                            original_img = Image.fromarray(inv_arr)
-                        elif original_img.mode in ('RGB', 'RGBA'):
-                            arr = np.array(original_img.convert('RGB'))
-                            inv_arr = 255 - arr
-                            original_img = Image.fromarray(inv_arr)
+                        if original_img.mode in ('L', 'RGB', 'RGBA'):
+                            # Need to handle alpha carefully or just convert to RGB first
+                            if original_img.mode == 'RGBA':
+                                # Split and invert RGB, keep A
+                                r, g, b, a = original_img.split()
+                                r, g, b = ImageOps.invert(r), ImageOps.invert(g), ImageOps.invert(b)
+                                original_img = Image.merge('RGBA', (r, g, b, a))
+                            else:
+                                original_img = ImageOps.invert(original_img)
                     
                     # --- Natural Grayscale Processing for AI OCR ---
                     # 1. Grayscale & Contrast

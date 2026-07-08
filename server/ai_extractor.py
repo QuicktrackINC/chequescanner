@@ -5,28 +5,29 @@ import io
 import logging
 import re
 import traceback
-import pytesseract
 from PIL import Image
 from openai import AsyncOpenAI
 from typing import Dict, Any, Tuple, Optional, List
 import google.generativeai as genai
 import asyncio
-import numpy as np
-import cv2
 import fitz # PyMuPDF
 from .validators import is_valid_routing
 
 logger = logging.getLogger("quicktrack")
 
-if os.name == 'nt':
-    tess_path_list = [
-        r'C:\Program Files\Tesseract-OCR\tesseract.exe',
-        r'C:\PROGRA~1\Tesseract-OCR\tesseract.exe'
-    ]
-    for p in tess_path_list:
-        if os.path.exists(p):
-            pytesseract.pytesseract.tesseract_cmd = p
-            break
+try:
+    import pytesseract  # type: ignore
+    if os.name == 'nt':
+        tess_path_list = [
+            r'C:\Program Files\Tesseract-OCR\tesseract.exe',
+            r'C:\PROGRA~1\Tesseract-OCR\tesseract.exe'
+        ]
+        for p in tess_path_list:
+            if os.path.exists(p):
+                pytesseract.pytesseract.tesseract_cmd = p  # type: ignore
+                break
+except ImportError:
+    pytesseract = None
 
 def get_tessdata_prefix():
     """
@@ -47,8 +48,8 @@ def deskew_image(img_cv):
     """
     Detects the skew angle of the image and rotates it to 0 degrees.
     """
-    import numpy as np
-    import cv2
+    import numpy as np  # type: ignore
+    import cv2  # type: ignore
     
     # We use a thresholded version for angle detection
     _, thresh = cv2.threshold(img_cv, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
@@ -80,9 +81,13 @@ def extract_micr_with_tesseract(image_bytes: bytes, known_check_number: Optional
     Fallback OCR for routing numbers using Tesseract with MICR font model.
     Uses image preprocessing and tries multiple PSM modes for best accuracy.
     """
+    if os.getenv("VERCEL") == "1":
+        logger.warning("Vercel Serverless environment detected: skipping Tesseract fallback.")
+        return None
+
     try:
-        import numpy as np
-        import cv2
+        import numpy as np  # type: ignore
+        import cv2  # type: ignore
 
         # Load image via OpenCV for preprocessing
         nparr = np.frombuffer(image_bytes, np.uint8)
@@ -123,7 +128,7 @@ def extract_micr_with_tesseract(image_bytes: bytes, known_check_number: Optional
             pil_crop = Image.fromarray(bin_img)
             for cfg in configs:
                 try:
-                    raw_text = pytesseract.image_to_string(pil_crop, config=cfg)
+                    raw_text = pytesseract.image_to_string(pil_crop, config=cfg)  # type: ignore
                     logger.info(f"Tess ({cfg[:12]}) raw: {repr(raw_text[:60])}")
 
                     # Find all 9-digit candidates via regex
@@ -147,9 +152,13 @@ def extract_micr_full_line(image_bytes: bytes, known_check_number: Optional[str]
     Final robust Sweeping-Window MICR extraction for Windows.
     Uses 'PROGRA~1' short-path to bypass Windows CLI space-handling bugs.
     """
+    if os.getenv("VERCEL") == "1":
+        logger.warning("Vercel Serverless environment detected: skipping Tesseract full line sweep.")
+        return None
+
     try:
-        import numpy as np
-        import cv2
+        import numpy as np  # type: ignore
+        import cv2  # type: ignore
 
         nparr = np.frombuffer(image_bytes, np.uint8)
         img_cv = cv2.imdecode(nparr, cv2.IMREAD_GRAYSCALE)
@@ -186,7 +195,7 @@ def extract_micr_full_line(image_bytes: bytes, known_check_number: Optional[str]
             
             for psm in [7, 6]:
                 try:
-                    raw = pytesseract.image_to_string(pil_crop, config=f'--psm {psm}')
+                    raw = pytesseract.image_to_string(pil_crop, config=f'--psm {psm}')  # type: ignore
                     digits_only = re.sub(r'\D+', '', raw)
                     
                     if len(digits_only) >= 9:
@@ -275,18 +284,16 @@ async def extract_micr_via_smart_ai_crop(image_bytes: bytes, known_check_number:
     High-confidence fallback using gpt-4o for robust OCR.
     """
     try:
-        import cv2
-        import numpy as np
+        # Load using PIL
+        pil_img = Image.open(io.BytesIO(image_bytes))
+        w, h = pil_img.size
+        # Crop the bottom 25% to capture the MICR line clearly
+        box = (0, int(h * 0.75), w, h)
+        micr_strip = pil_img.crop(box)
         
-        np_img = np.frombuffer(image_bytes, np.uint8)
-        img = cv2.imdecode(np_img, cv2.IMREAD_GRAYSCALE)
-        if img is None: return None
-            
-        h, w = img.shape
-        # Use 25% height (0.75 start) to capture the MICR line clearly
-        micr_strip = img[int(h * 0.75):, :]
-        _, buffer = cv2.imencode('.jpg', micr_strip)
-        base64_image = base64.b64encode(buffer).decode('utf-8')
+        buffer_io = io.BytesIO()
+        micr_strip.save(buffer_io, format="JPEG")
+        base64_image = base64.b64encode(buffer_io.getvalue()).decode('utf-8')
         
         if AI_PROVIDER == "gemini":
             prompt = "You are a specialized MICR reader. Look at the bottom strip. Return ONLY the routing digits found between transit symbols ⑆."
@@ -310,7 +317,7 @@ async def extract_micr_via_smart_ai_crop(image_bytes: bytes, known_check_number:
             for attempt in range(max_attempts):
                 try:
                     response = await model.generate_content_async(
-                        [prompt, Image.open(io.BytesIO(buffer))],
+                        [prompt, micr_strip],
                         generation_config=genai.types.GenerationConfig(temperature=0.0)
                     )
                     raw_res = response.text.strip()
@@ -358,10 +365,20 @@ async def extract_check_data_via_tesseract_fallback(image_bytes: bytes, filename
     Fallback extraction using pytesseract with fixed heuristics based on standard Lama Corporation checks.
     Invoked automatically when the primary AI Provider's Quota is exceeded.
     """
+    if os.getenv("VERCEL") == "1":
+        logger.error("Vercel Serverless environment detected: Tesseract is unavailable for fallback. Returning manual review payload.")
+        return {
+             "document_type": "check",
+             "status": "MANUAL_REVIEW_REQUIRED",
+             "validation_notes": "Tesseract Fallback Unavailable on Vercel Serverless. Manual Review Required.",
+             "confidence_score": 0.0,
+             "skip_repair": True
+        }
+
     try:
-        import numpy as np
-        import cv2
-        import pytesseract
+        import numpy as np  # type: ignore
+        import cv2  # type: ignore
+        import pytesseract  # type: ignore
         from PIL import Image
         import io
         import re
@@ -385,13 +402,13 @@ async def extract_check_data_via_tesseract_fallback(image_bytes: bytes, filename
         memo_img = Image.fromarray(img_cv[int(H*0.60):int(H*0.85), :int(W*0.50)])
         micr_img = Image.fromarray(img_cv[int(H*0.75):, :])
 
-        top_left_text = pytesseract.image_to_string(top_left_img)
-        top_right_text = pytesseract.image_to_string(top_right_img, config='--psm 6')
-        top_full_text = pytesseract.image_to_string(top_full_img)
-        payee_text = pytesseract.image_to_string(payee_img, config='--psm 6')
-        amt_text = pytesseract.image_to_string(amt_img, config='--psm 6')
-        memo_text = pytesseract.image_to_string(memo_img, config='--psm 6')
-        bottom_text = pytesseract.image_to_string(micr_img, config='--psm 6')
+        top_left_text = pytesseract.image_to_string(top_left_img)  # type: ignore
+        top_right_text = pytesseract.image_to_string(top_right_img, config='--psm 6')  # type: ignore
+        top_full_text = pytesseract.image_to_string(top_full_img)  # type: ignore
+        payee_text = pytesseract.image_to_string(payee_img, config='--psm 6')  # type: ignore
+        amt_text = pytesseract.image_to_string(amt_img, config='--psm 6')  # type: ignore
+        memo_text = pytesseract.image_to_string(memo_img, config='--psm 6')  # type: ignore
+        bottom_text = pytesseract.image_to_string(micr_img, config='--psm 6')  # type: ignore
 
         lines = [l.strip() for l in top_left_text.split('\n') if l.strip()]
         
@@ -532,8 +549,10 @@ def is_likely_deposit_slip(image_bytes: bytes) -> bool:
         strong_markers = ["TOTAL CASH", "ATTACH LIST", "TOTAL ITEMS", "LIST CHECKS SEPARATELY"]
 
         def _check_rotation(rotated_img):
+            if pytesseract is None:
+                return False
             # Use PSM 11 (sparse text) to catch scattered words better
-            text = pytesseract.image_to_string(rotated_img, config='--psm 11').upper()
+            text = pytesseract.image_to_string(rotated_img, config='--psm 11').upper()  # type: ignore
             matches = sum(1 for m in strong_markers if m in text)
             
             # If we find at least 2 markers, or "DEPOSIT", it's likely a deposit slip
@@ -650,20 +669,11 @@ async def extract_check_batch_via_gemini(checks: list[Tuple[bytes, str]], table_
                 if raw_img.width > 2000 or raw_img.height > 2000:
                     raw_img.thumbnail((2000, 2000))
                     
-                # Convert to OpenCV for high-quality contrast enhancement
-                img_cv = cv2.cvtColor(np.array(raw_img), cv2.COLOR_RGB2BGR)
-                
-                # Apply CLAHE (Contrast Limited Adaptive Histogram Equalization)
+                from PIL import ImageEnhance
+                # Apply PIL contrast enhancement (lighter alternative to OpenCV CLAHE)
                 # This makes faint handwriting and text pop out against check backgrounds.
-                lab = cv2.cvtColor(img_cv, cv2.COLOR_BGR2LAB)
-                l, a, b_chan = cv2.split(lab)
-                clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
-                cl = clahe.apply(l)
-                limg = cv2.merge((cl,a,b_chan))
-                enhanced = cv2.cvtColor(limg, cv2.COLOR_LAB2BGR)
-                
-                # Convert back to PIL for Gemini
-                final_img = Image.fromarray(cv2.cvtColor(enhanced, cv2.COLOR_BGR2RGB))
+                enhancer = ImageEnhance.Contrast(raw_img)
+                final_img = enhancer.enhance(1.5)
                 return final_img
 
             # Offload blocking PIL/Fitz operations to a separate thread

@@ -1,0 +1,14 @@
+{
+  "functions": {
+    "api/**/*": {
+      "maxDuration": 300,
+      "memory": 1024
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "/api/index.py"
+    }
+  ]
+}

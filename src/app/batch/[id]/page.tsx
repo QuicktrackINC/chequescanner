@@ -33,6 +33,7 @@ import { twMerge } from "tailwind-merge";
 import { useToast } from "../../components/Toast";
 import { useConfirm } from "../../components/ConfirmDialog";
 import { logout } from "../../login/actions";
+import { ProfileDropdown } from "../../../components/layout/profile-dropdown";
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -665,12 +666,7 @@ export default function ReviewPage() {
             {theme === "dark" ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
           </button>
 
-          <form action={logout}>
-            <button type="submit" title="Logout"
-              className="p-2 rounded-xl bg-black/5 dark:bg-white/5 hover:bg-red-500/10 hover:text-red-500 transition-colors text-slate-500">
-              <LogOut className="w-4 h-4" />
-            </button>
-          </form>
+          <ProfileDropdown logoutAction={logout} />
         </div>
       </header>
 

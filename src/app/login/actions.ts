@@ -14,7 +14,9 @@ export async function login(formData: FormData) {
 
   const apiUrl = process.env.NEXT_PUBLIC_API_URL 
     ? process.env.NEXT_PUBLIC_API_URL.replace(/\/$/, '') 
-    : 'http://127.0.0.1:8000'
+    : process.env.VERCEL_PROJECT_PRODUCTION_URL 
+      ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` 
+      : 'http://127.0.0.1:8000'
   
   let success = false
   let data: LoginResponse | null = null

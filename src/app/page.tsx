@@ -34,6 +34,7 @@ import { twMerge } from "tailwind-merge";
 import { useToast } from "./components/Toast";
 import { useConfirm } from "./components/ConfirmDialog";
 import { logout } from "./login/actions";
+import { ProfileDropdown } from "../components/layout/profile-dropdown";
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -201,6 +202,13 @@ export default function Dashboard() {
   useEffect(() => {
     setMounted(true);
     fetchData(false);
+    
+    // Clean up sso_token from URL if it exists
+    if (typeof window !== 'undefined' && window.location.search.includes('sso_token')) {
+      const newUrl = new URL(window.location.href);
+      newUrl.searchParams.delete('sso_token');
+      window.history.replaceState({}, '', newUrl.pathname + newUrl.search);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -346,15 +354,7 @@ export default function Dashboard() {
             <Moon className="w-5 h-5 text-indigo-600" />
           )}
         </button>
-        <form action={logout}>
-          <button
-            type="submit"
-            title="Logout"
-            className="p-3 rounded-2xl bg-card border border-border-custom shadow-xl hover:scale-110 transition-transform duration-300 group"
-          >
-            <LogOut className="w-5 h-5 text-red-500 group-hover:translate-x-0.5 transition-transform duration-300" />
-          </button>
-        </form>
+        <ProfileDropdown logoutAction={logout} />
       </div>
 
       {/* Background blobs */}

@@ -88,10 +88,13 @@ class AuditLog(Base):
     check = relationship("Check", back_populates="audit_logs")
 
 class User(Base):
-    __tablename__ = "users"
+    __tablename__ = "User"
 
-    id = Column(Integer, primary_key=True, index=True)
-    username = Column(String, unique=True, index=True, nullable=False)
-    password_hash = Column(String, nullable=False)
-    role = Column(String, default="REVIEWER", nullable=False) # "ADMIN" or "REVIEWER"
-    created_at = Column(DateTime, default=datetime.utcnow)
+    id = Column(String, primary_key=True, index=True)
+    email = Column(String, unique=True, index=True, nullable=False)
+    emailVerified = Column(DateTime, nullable=True)
+    name = Column(String, nullable=True)
+    passwordHash = Column(String, nullable=True)
+    role = Column(String, default="STAFF", nullable=False) # "ADMIN" or "STAFF"
+    createdAt = Column(DateTime, default=datetime.utcnow)
+    updatedAt = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

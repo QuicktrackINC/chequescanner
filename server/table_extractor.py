@@ -1,4 +1,4 @@
-import pdfplumber
+import fitz
 import re
 from typing import Dict, Tuple, List, Optional
 import logging
@@ -25,34 +25,35 @@ def extract_table_data(pdf_bytes: bytes, page_indices: Optional[List[int]] = Non
     statement_year = "2026" # Fallback based on known dataset
     
     try:
-        with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+        with fitz.open(stream=pdf_bytes, filetype="pdf") as pdf:
             # 1. Try to dynamically extract statement year from page 1
-            if len(pdf.pages) > 0:
-                first_page_text = pdf.pages[0].extract_text() or ""
+            if len(pdf) > 0:
+                first_page_text = pdf[0].get_text() or ""
                 year_matches = re.findall(r'20\d{2}', first_page_text)
                 if year_matches:
                     statement_year = year_matches[0]
             
             # 2. Determine which pages to scan
             if page_indices is not None:
-                scan_pages = [p for p in page_indices if p < len(pdf.pages)]
+                scan_pages = [p for p in page_indices if p < len(pdf)]
             else:
                 # Default: scan first 7 pages (where header tables usually are)
                 # INCREASED limit to 10 just in case summary is slightly later
-                scan_pages = range(min(10, len(pdf.pages)))
+                scan_pages = range(min(10, len(pdf)))
             
             for i in scan_pages:
-                page = pdf.pages[i]
-                words = page.extract_words()
+                page = pdf[i]
+                words = page.get_text("words")
                 
                 # Group words into lines based on Y coordinate (vertical). 
                 # Tolerance of 3 points is standard for slight PDF misalignments.
                 lines = {}
                 for w in words:
-                    y0 = round(w['top'] / 3) * 3
+                    # w is (x0, y0, x1, y1, "word", block_no, line_no, word_no)
+                    y0 = round(w[1] / 3) * 3
                     if y0 not in lines:
                         lines[y0] = []
-                    lines[y0].append(w)
+                    lines[y0].append({'x0': w[0], 'text': w[4]})
                 
                 # Process line by line
                 for y0 in sorted(lines.keys()):

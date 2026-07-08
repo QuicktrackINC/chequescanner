@@ -24,6 +24,7 @@ import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 import { useToast } from "../components/Toast";
 import { logout } from "../login/actions";
+import { ProfileDropdown } from "../../components/layout/profile-dropdown";
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -194,16 +195,8 @@ export default function UsersPage() {
           {theme === "dark" ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
         </button>
 
-        <form action={logout}>
-          <button
-            type="submit"
-            title="Logout"
-            className="p-3 rounded-full bg-white dark:bg-zinc-900 shadow-xl border border-border-custom hover:bg-red-50 hover:border-red-500/20 hover:text-red-500 dark:hover:bg-red-500/10 transition-colors text-slate-500"
-          >
-            <LogOut className="w-4 h-4" />
-          </button>
-        </form>
-      </div>
+          <ProfileDropdown logoutAction={logout} />
+        </div>
 
       <div className="relative max-w-5xl mx-auto px-6 py-12 md:py-24 space-y-8">
         <Link

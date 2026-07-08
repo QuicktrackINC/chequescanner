@@ -1,4 +1,4 @@
-import pandas as pd
+import xlsxwriter
 from sqlalchemy.orm import Session
 from io import BytesIO
 from .models import Check, CheckBatch
@@ -42,17 +42,28 @@ def generate_accounting_spreadsheet(db: Session, batch_id: int) -> BytesIO:
             "Reviewed At": formatted_reviewed_at
         })
         
-    df = pd.DataFrame(data)
-    
     output = BytesIO()
-    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df.to_excel(writer, index=False, sheet_name=f"Batch_{batch_number}")
-        
-        # Auto-adjust column width for readability
-        worksheet = writer.sheets[f"Batch_{batch_number}"]
-        for i, col in enumerate(df.columns):
-            max_len = max(df[col].astype(str).map(len).max(), len(col)) + 2
-            worksheet.set_column(i, i, max_len)
+    workbook = xlsxwriter.Workbook(output)
+    worksheet = workbook.add_worksheet(f"Batch_{batch_number}")
+    
+    if data:
+        headers = list(data[0].keys())
+        # Write headers
+        for col_num, header in enumerate(headers):
+            worksheet.write(0, col_num, header)
             
+        # Write data and compute max column widths
+        col_widths = {i: len(header) for i, header in enumerate(headers)}
+        for row_num, row_data in enumerate(data):
+            for col_num, key in enumerate(headers):
+                cell_value = str(row_data[key])
+                worksheet.write(row_num + 1, col_num, cell_value)
+                col_widths[col_num] = max(col_widths[col_num], len(cell_value))
+                
+        # Set column widths
+        for col_num, width in col_widths.items():
+            worksheet.set_column(col_num, col_num, width + 2)
+            
+    workbook.close()
     output.seek(0)
     return output

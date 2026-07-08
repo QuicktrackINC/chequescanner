@@ -18,6 +18,7 @@ else:
 cipher_suite = Fernet(FERNET_KEY)
 
 SECRET_KEY = os.getenv("SECRET_KEY", "quicktrack-super-secret-key")
+HUB_SSO_SECRET = os.getenv("AUTH_SECRET", "quicktrack-dev-secret-change-in-production")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7 # 1 week
 security = HTTPBearer()
@@ -68,12 +69,57 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Security(securi
             return {"user_id": admin.id, "username": admin.username, "role": admin.role}
         return {"user_id": 1, "username": "accounting_user", "role": "ADMIN"}
 
+    username = None
+    role = "STAFF"
+
     try:
+        # Try Hub SSO token first
+        payload = jwt.decode(token, HUB_SSO_SECRET, algorithms=[ALGORITHM], audience="cheque-scanner", options={"verify_exp": False})
+        
+        # Manually check token age (24 hours max)
+        import time
+        if time.time() - payload.get("iat", 0) > 86400:
+            raise jwt.ExpiredSignatureError("SSO session expired")
+            
+        email = payload.get("email")
+        if not email:
+            raise HTTPException(status_code=400, detail="Email missing in SSO token")
+            
+        user = db.query(User).filter(User.username == email).first()
+        if not user:
+            raise HTTPException(status_code=403, detail="Account not linked. Access denied.")
+            
+        return {"user_id": user.id, "username": user.username, "role": user.role}
+    except jwt.PyJWTError:
+        pass
+
+    try:
+        # Fallback to dev secret for local Hub -> remote Vercel testing
+        payload = jwt.decode(token, "quicktrack-dev-secret-change-in-production", algorithms=[ALGORITHM], audience="cheque-scanner", options={"verify_exp": False})
+        
+        import time
+        if time.time() - payload.get("iat", 0) > 86400:
+            raise jwt.ExpiredSignatureError("SSO session expired")
+            
+        email = payload.get("email")
+        if not email:
+            raise HTTPException(status_code=400, detail="Email missing in SSO token")
+            
+        user = db.query(User).filter(User.username == email).first()
+        if not user:
+            raise HTTPException(status_code=403, detail="Account not linked. Access denied.")
+            
+        return {"user_id": user.id, "username": user.username, "role": user.role}
+    except jwt.PyJWTError:
+        pass
+
+    try:
+        # Try ChequeScanner local token
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        username: str = payload.get("sub")
+        username = payload.get("sub")
         if username is None:
             raise HTTPException(status_code=401, detail="Invalid token payload")
-    except Exception:
+    except jwt.PyJWTError:
         raise HTTPException(status_code=401, detail="Could not validate credentials")
     
     user = db.query(User).filter(User.username == username).first()
