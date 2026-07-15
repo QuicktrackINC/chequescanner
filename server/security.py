@@ -18,7 +18,7 @@ else:
 cipher_suite = Fernet(FERNET_KEY)
 
 SECRET_KEY = os.getenv("SECRET_KEY", "quicktrack-super-secret-key")
-HUB_SSO_SECRET = os.getenv("AUTH_SECRET", "quicktrack-dev-secret-change-in-production")
+HUB_SSO_SECRET = os.getenv("SSO_SHARED_SECRET", "quicktrack-dev-secret-change-in-production")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7 # 1 week
 security = HTTPBearer()
@@ -57,6 +57,9 @@ def decrypt_data(token: str) -> str:
 def get_current_user(credentials: HTTPAuthorizationCredentials = Security(security), db: Session = Depends(get_db)):
     """Verifies JWT token and retrieves user from database."""
     from .models import User
+    import uuid
+    import time
+    
     token = credentials.credentials
     if not token:
         raise HTTPException(status_code=401, detail="Invalid auth credentials")
@@ -77,17 +80,37 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Security(securi
         payload = jwt.decode(token, HUB_SSO_SECRET, algorithms=[ALGORITHM], audience="cheque-scanner", options={"verify_exp": False})
         
         # Manually check token age (24 hours max)
-        import time
         if time.time() - payload.get("iat", 0) > 86400:
             raise jwt.ExpiredSignatureError("SSO session expired")
             
         email = payload.get("email")
         if not email:
             raise HTTPException(status_code=400, detail="Email missing in SSO token")
+
+        role_from_token = payload.get("role", "STAFF")
+        mapped_role = "STAFF"
+        if role_from_token == "SUPERADMIN":
+            mapped_role = "SUPERADMIN"
+        elif role_from_token == "ADMIN":
+            mapped_role = "ADMIN"
             
         user = db.query(User).filter(User.email == email).first()
         if not user:
-            raise HTTPException(status_code=403, detail="Account not linked. Access denied.")
+            # Auto-provision
+            user = User(
+                id=str(uuid.uuid4()),
+                email=email,
+                name=payload.get("name", "SSO User"),
+                role=mapped_role,
+                passwordHash="sso-auto-provisioned"
+            )
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+        elif user.role != mapped_role:
+            user.role = mapped_role
+            db.commit()
+            db.refresh(user)
             
         return {"user_id": user.id, "username": user.email, "role": user.role}
     except jwt.PyJWTError:
@@ -97,7 +120,6 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Security(securi
         # Fallback to dev secret for local Hub -> remote Vercel testing
         payload = jwt.decode(token, "quicktrack-dev-secret-change-in-production", algorithms=[ALGORITHM], audience="cheque-scanner", options={"verify_exp": False})
         
-        import time
         if time.time() - payload.get("iat", 0) > 86400:
             raise jwt.ExpiredSignatureError("SSO session expired")
             
@@ -105,9 +127,30 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Security(securi
         if not email:
             raise HTTPException(status_code=400, detail="Email missing in SSO token")
             
+        role_from_token = payload.get("role", "STAFF")
+        mapped_role = "STAFF"
+        if role_from_token == "SUPERADMIN":
+            mapped_role = "SUPERADMIN"
+        elif role_from_token == "ADMIN":
+            mapped_role = "ADMIN"
+
         user = db.query(User).filter(User.email == email).first()
         if not user:
-            raise HTTPException(status_code=403, detail="Account not linked. Access denied.")
+            # Auto-provision
+            user = User(
+                id=str(uuid.uuid4()),
+                email=email,
+                name=payload.get("name", "SSO User"),
+                role=mapped_role,
+                passwordHash="sso-auto-provisioned"
+            )
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+        elif user.role != mapped_role:
+            user.role = mapped_role
+            db.commit()
+            db.refresh(user)
             
         return {"user_id": user.id, "username": user.email, "role": user.role}
     except jwt.PyJWTError:
@@ -127,3 +170,4 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Security(securi
         raise HTTPException(status_code=401, detail="User not found")
         
     return {"user_id": user.id, "username": user.email, "role": user.role}
+

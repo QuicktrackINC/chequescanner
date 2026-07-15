@@ -1,6 +1,7 @@
 import { cookies } from 'next/headers'
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
+import * as jose from 'jose';
 
 export async function GET(request: NextRequest) {
   const token = request.nextUrl.searchParams.get('token')
@@ -22,12 +23,17 @@ export async function GET(request: NextRequest) {
     path: '/'
   })
 
-  // Try to parse the role out of the token
+  // Try to parse the role out of the token securely
   try {
-    const payloadStr = atob(token.split('.')[1])
-    const payload = JSON.parse(payloadStr)
+    const secret = new TextEncoder().encode(process.env.SSO_SHARED_SECRET || 'quicktrack-dev-secret-change-in-production')
+    const { payload } = await jose.jwtVerify(token, secret)
+    
     if (payload.role) {
-      response.cookies.set('auth_role', payload.role, {
+      let mappedRole = 'STAFF'
+      if (payload.role === 'SUPERADMIN') mappedRole = 'SUPERADMIN'
+      else if (payload.role === 'ADMIN') mappedRole = 'ADMIN'
+
+      response.cookies.set('auth_role', mappedRole, {
         httpOnly: false,
         secure: process.env.NODE_ENV === 'production',
         sameSite: 'lax',
