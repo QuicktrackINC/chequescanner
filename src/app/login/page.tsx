@@ -65,6 +65,31 @@ export default async function LoginPage(props: {
             Sign In
           </button>
         </form>
+
+        <div className="px-6 pb-4 sm:px-20">
+          <div className="relative">
+            <div className="absolute inset-0 flex items-center">
+              <div className="w-full border-t border-gray-200 dark:border-zinc-800"></div>
+            </div>
+            <div className="relative flex justify-center text-sm">
+              <span className="bg-white px-2 text-gray-500 dark:bg-zinc-900 dark:text-zinc-400">
+                Or continue with
+              </span>
+            </div>
+          </div>
+
+          <div className="mt-4 pb-6">
+            <a
+              href="http://localhost:3000/api/tools/check-scanner/launch"
+              className="flex h-12 w-full items-center justify-center gap-3 rounded-lg border border-gray-300 bg-white px-4 py-3 text-base font-medium text-gray-700 shadow-sm transition-colors hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-black focus:ring-offset-2 dark:border-zinc-700 dark:bg-zinc-800 dark:text-white dark:hover:bg-zinc-700 dark:focus:ring-white dark:focus:ring-offset-zinc-900"
+            >
+              <div className="flex h-5 w-5 items-center justify-center rounded bg-orange-500 text-[10px] font-black text-white">
+                Q
+              </div>
+              Login via QuickTrack Hub
+            </a>
+          </div>
+        </div>
       </div>
     </div>
   )
