@@ -12,6 +12,7 @@ export async function POST(request: Request): Promise<NextResponse> {
         // Allow the upload, the python backend will validate the user when processing
         return {
           allowedContentTypes: ['application/pdf'],
+          maximumSizeInBytes: 50 * 1024 * 1024, // 50 MB
           tokenPayload: JSON.stringify({
             // metadata
           }),
