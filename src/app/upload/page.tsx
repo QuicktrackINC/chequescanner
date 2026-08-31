@@ -48,8 +48,6 @@ export default function UploadPage() {
   const [selectedChecks, setSelectedChecks] = useState<Set<number>>(new Set());
   const apiBase = (process.env.NEXT_PUBLIC_API_URL || "").replace(/\/$/, "");
 
-  const [blobUrl, setBlobUrl] = useState<string | null>(null);
-
   const getAuthToken = useCallback(() => {
     if (typeof document !== "undefined") {
       const match = document.cookie.match(new RegExp("(^| )auth_token=([^;]+)"));
@@ -62,15 +60,15 @@ export default function UploadPage() {
     if (acceptedFiles.length > 0) {
       const selectedFile = acceptedFiles[0];
       setFile(selectedFile);
-      setPhase("uploading");
+      setPhase("idle");
       setErrorMsg(null);
       setThumbnails([]);
       setSelectedTables(new Set());
       setSelectedChecks(new Set());
       
+      // Fetch Thumbnails
+      setLoadingThumbnails(true);
       try {
-        // Fetch Thumbnails directly using the file
-        setLoadingThumbnails(true);
         const formData = new FormData();
         formData.append("file", selectedFile);
         const res = await fetch(`${apiBase}/api/pdf/thumbnails`, {
@@ -81,17 +79,14 @@ export default function UploadPage() {
         if (res.ok) {
           const data = await res.json();
           setThumbnails(data.thumbnails);
-          setPhase("idle");
         } else {
           const errorData = await res.json().catch(() => ({ detail: `Error ${res.status}` }));
           console.error("Thumbnail fetch failed:", res.status, errorData);
           setErrorMsg(`PDF Preview Error: ${errorData.detail || 'Could not reach server'}`);
-          setPhase("error");
         }
       } catch (err) {
         console.error("Failed to load thumbnails", err);
         setErrorMsg("Network Error: Could not connect to the backend server.");
-        setPhase("error");
       } finally {
         setLoadingThumbnails(false);
       }
