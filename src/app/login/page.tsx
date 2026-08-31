@@ -80,7 +80,7 @@ export default async function LoginPage(props: {
 
           <div className="mt-4 pb-6">
             <a
-              href="https://quicktrackhub.vercel.app/api/tools/check-scanner/launch"
+              href="https://hub.quicktrackinc.com/api/tools/check-scanner/launch"
               className="flex h-12 w-full items-center justify-center gap-3 rounded-lg border border-gray-300 bg-white px-4 py-3 text-base font-medium text-gray-700 shadow-sm transition-colors hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-black focus:ring-offset-2 dark:border-zinc-700 dark:bg-zinc-800 dark:text-white dark:hover:bg-zinc-700 dark:focus:ring-white dark:focus:ring-offset-zinc-900"
             >
               <div className="flex h-5 w-5 items-center justify-center rounded bg-orange-500 text-[10px] font-black text-white">
