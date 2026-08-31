@@ -51,3 +51,4 @@ api/server.log
 
 # Uploaded cheque scans (runtime files, not source)
 public/uploads/
+.env*.local

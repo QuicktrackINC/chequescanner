@@ -38,6 +38,7 @@ type UploadPhase = "idle" | "uploading" | "extracting" | "processing" | "done" |
 export default function UploadPage() {
   const router = useRouter();
   const [file, setFile] = useState<File | null>(null);
+  const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [phase, setPhase] = useState<UploadPhase>("idle");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [totalChecks, setTotalChecks] = useState(0);
