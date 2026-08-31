@@ -14,6 +14,7 @@ import asyncio
 import re
 import json
 import base64
+import urllib.request
 from dotenv import load_dotenv
 
 # ── Logging ───────────────────────────────────────────────────────────────────
@@ -29,6 +30,41 @@ load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file_
 
 def get_safe_filename(filename: str) -> str:
     return re.sub(r'[^a-zA-Z0-9._-]', '_', filename)
+
+def delete_blob_bg(url: str):
+    token = os.environ.get("BLOB_READ_WRITE_TOKEN")
+    if not token:
+        logger.error("No BLOB_READ_WRITE_TOKEN, cannot delete blob.")
+        return
+    try:
+        req = urllib.request.Request("https://blob.vercel-storage.com/delete",
+                                     data=json.dumps({"urls": [url]}).encode("utf-8"),
+                                     headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
+        req.get_method = lambda: 'POST'
+        urllib.request.urlopen(req, timeout=10)
+        logger.info(f"Deleted blob: {url}")
+    except Exception as e:
+        logger.error(f"Failed to delete blob {url}: {e}")
+
+async def get_pdf_bytes_and_filename(file: Optional[UploadFile], file_url: Optional[str]):
+    if file_url:
+        try:
+            req = urllib.request.Request(file_url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req, timeout=30) as response:
+                pdf_bytes = response.read()
+            filename = file_url.split("/")[-1].split("?")[0]
+            if not filename.lower().endswith(".pdf"):
+                filename += ".pdf"
+            return pdf_bytes, filename
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Failed to download file from URL: {str(e)}")
+    elif file:
+        if not file.filename.lower().endswith(".pdf"):
+            raise HTTPException(status_code=400, detail="Only PDF files are accepted.")
+        pdf_bytes = await file.read()
+        return pdf_bytes, file.filename
+    else:
+        raise HTTPException(status_code=400, detail="Must provide either file or file_url.")
 
 # Local imports
 from .ai_extractor import (
@@ -563,18 +599,18 @@ async def _process_batch_in_background(
 
 @app.post("/api/pdf/thumbnails")
 async def get_pdf_thumbnails(
-    file: UploadFile = File(...),
+    background_tasks: BackgroundTasks,
+    file: Optional[UploadFile] = File(None),
+    file_url: Optional[str] = Form(None),
     user: dict = Depends(get_current_user)
 ):
     """
     Renders every page of a PDF as a low-res Base64 thumbnail for visual selection.
     """
     import fitz
-    if not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="Only PDF files are accepted.")
-
+    
     try:
-        pdf_bytes = await file.read()
+        pdf_bytes, filename = await get_pdf_bytes_and_filename(file, file_url)
         thumbnails = []
         
         with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
@@ -584,8 +620,13 @@ async def get_pdf_thumbnails(
                 img_data = pix.tobytes("jpeg")
                 b64 = base64.b64encode(img_data).decode("utf-8")
                 thumbnails.append(b64)
-                
+        
+        if file_url:
+            background_tasks.add_task(delete_blob_bg, file_url)
+            
         return {"thumbnails": thumbnails}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Thumbnail generation failed: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to generate thumbnails: {str(e)}")
@@ -595,7 +636,8 @@ async def get_pdf_thumbnails(
 @app.post("/api/checks/pdf_upload")  # backwards-compat alias
 async def upload_pdf_batch(
     background_tasks: BackgroundTasks,
-    file: UploadFile = File(...),
+    file: Optional[UploadFile] = File(None),
+    file_url: Optional[str] = Form(None),
     table_pages: Optional[str] = Form(None),
     check_pages: Optional[str] = Form(None),
     force_scan: bool = Form(False),
@@ -607,88 +649,78 @@ async def upload_pdf_batch(
     runs AI OCR on each in the background, and creates a batch.
     """
     import fitz
-    if not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="Only PDF files are accepted.")
-
-    pdf_bytes = await file.read()
-    logger.info(f'"PDF upload received: {file.filename} ({len(pdf_bytes)} bytes) by {user["username"]}"')
-
-    # Get total page count for range validation
-    with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
-        max_pages = doc.page_count
-
-    # Parse ranges if provided
-    table_indices = parse_range_string(table_pages, max_pages) if table_pages else None
-    check_indices = parse_range_string(check_pages, max_pages) if check_pages else None
-
-    logger.info(f"Manual Ranges: tables={table_pages} (indices={table_indices}), checks={check_pages} (indices={check_indices}), Force={force_scan}")
-
-    # 1. Extract table data (Source of Truth)
+    
     try:
-        table_data = extract_table_data(pdf_bytes, page_indices=table_indices)
-        logger.info(f"Extracted {len(table_data)} summary table records for validation.")
-    except Exception as e:
-        logger.error(f"Table extraction failed (non-critical): {e}")
-        table_data = {}
+        pdf_bytes, filename = await get_pdf_bytes_and_filename(file, file_url)
 
-    # 2. Extract check images from the PDF
-    try:
-        check_images = extract_checks_from_pdf(pdf_bytes, page_indices=check_indices, force_scan=force_scan)
-    except Exception as e:
-        logger.error(f'"PDF extraction failed: {str(e)}"')
-        raise HTTPException(status_code=500, detail=f"Failed to extract checks from PDF: {e}")
+        # Get total page count for range validation
+        with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
+            max_pages = doc.page_count
 
-    if not check_images:
-        raise HTTPException(status_code=400, detail="No signed checks were found in this PDF.")
+        # Parse ranges if provided
+        table_indices = parse_range_string(table_pages, max_pages) if table_pages else None
+        check_indices = parse_range_string(check_pages, max_pages) if check_pages else None
 
-    logger.info(f'"Extracted {len(check_images)} checks from PDF"')
+        # 1. Extract table data (Source of Truth)
+        try:
+            table_data = extract_table_data(pdf_bytes, page_indices=table_indices)
+        except Exception as e:
+            logger.error(f"Table extraction failed (non-critical): {e}")
+            table_data = {}
 
-    # 3. Create batch (Commit immediately to fix foreign key integrity errors)
-    params = {
-        "table_pages": table_pages,
-        "check_pages": check_pages,
-        "force_scan": force_scan
-    }
-    
-    new_batch = CheckBatch(
-        created_by=user["username"],
-        status=CheckStatus.PENDING,
-        parameters_json=json.dumps(params)
-    )
-    db.add(new_batch)
-    db.commit()
-    db.refresh(new_batch)
-    batch_id = new_batch.id
-    
-    # 3.1 Persist PDF for resume support
-    pdf_filename = f"{batch_id}.pdf"
-    pdf_path = os.path.join(STATEMENTS_DIR, pdf_filename)
-    with open(pdf_path, "wb") as f:
-        f.write(pdf_bytes)
-    
-    new_batch.original_pdf_path = pdf_path
-    db.commit()
+        # 2. Extract check images from the PDF
+        try:
+            check_images = extract_checks_from_pdf(pdf_bytes, page_indices=check_indices, force_scan=force_scan)
+        except Exception as e:
+            logger.error(f'"PDF extraction failed: {str(e)}"')
+            raise HTTPException(status_code=500, detail=f"Failed to extract checks from PDF: {e}")
 
-    logger.info(f'"Batch created: id={batch_id} by={user["username"]}, PDF saved to {pdf_path}"')
+        if not check_images:
+            raise HTTPException(status_code=400, detail="No signed checks were found in this PDF.")
 
-    # 4. Start processing
-    if os.getenv("VERCEL") == "1":
-        logger.info("Vercel detected: Running batch processing synchronously to avoid timeout kills.")
-        await _process_batch_in_background(check_images, batch_id, table_data)
-        return {
-            "batch_id": batch_id,
-            "total_checks": len(check_images),
-            "status": "EXTRACTED",
-            "message": "Check extraction completed synchronously."
+        total_checks = len(check_images)
+
+        # 3. Create batch
+        params = {
+            "table_pages": table_pages,
+            "check_pages": check_pages,
+            "force_scan": force_scan
         }
-    else:
+        
+        new_batch = CheckBatch(
+            created_by=user["username"],
+            status=CheckStatus.PENDING,
+            parameters_json=json.dumps(params)
+        )
+        db.add(new_batch)
+        db.commit()
+        db.refresh(new_batch)
+        batch_id = new_batch.id
+        
+        # Save blob for processing
+        pdf_path = os.path.join(STATEMENTS_DIR, f"{batch_id}.pdf")
+        with open(pdf_path, "wb") as f:
+            f.write(pdf_bytes)
+        
+        new_batch.original_pdf_path = pdf_path
+        db.commit()
+
+        # Kick off background extraction process
         background_tasks.add_task(_process_batch_in_background, check_images, batch_id, table_data)
+        
+        if file_url:
+            background_tasks.add_task(delete_blob_bg, file_url)
+
         return {
+            "message": "Upload successful. Checks are being processed.",
             "batch_id": batch_id,
-            "total_checks": len(check_images),
-            "status": "PROCESSING",
-            "message": "Check extraction started in background."
+            "total_checks": total_checks
         }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Upload failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
 
 
 @app.post("/api/checks/batches/{batch_id}/resume")
