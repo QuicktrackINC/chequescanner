@@ -5,6 +5,7 @@ import { useDropzone } from "react-dropzone";
 import { motion, AnimatePresence } from "framer-motion";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { upload } from '@vercel/blob/client';
 import {
   FileText,
   Upload,
@@ -65,12 +66,21 @@ export default function UploadPage() {
       setThumbnails([]);
       setSelectedTables(new Set());
       setSelectedChecks(new Set());
+      setBlobUrl(null);
       
-      // Fetch Thumbnails
-      setLoadingThumbnails(true);
       try {
+        // 1. Upload to Vercel Blob
+        const blob = await upload(selectedFile.name, selectedFile, {
+          access: 'public',
+          handleUploadUrl: '/api/upload',
+        });
+        
+        setBlobUrl(blob.url);
+        
+        // 2. Fetch Thumbnails
+        setLoadingThumbnails(true);
         const formData = new FormData();
-        formData.append("file", selectedFile);
+        formData.append("file_url", blob.url);
         const res = await fetch(`${apiBase}/api/pdf/thumbnails`, {
           method: "POST",
           headers: { Authorization: `Bearer ${getAuthToken()}` },
@@ -79,14 +89,17 @@ export default function UploadPage() {
         if (res.ok) {
           const data = await res.json();
           setThumbnails(data.thumbnails);
+          setPhase("idle");
         } else {
           const errorData = await res.json().catch(() => ({ detail: `Error ${res.status}` }));
           console.error("Thumbnail fetch failed:", res.status, errorData);
           setErrorMsg(`PDF Preview Error: ${errorData.detail || 'Could not reach server'}`);
+          setPhase("error");
         }
       } catch (err) {
         console.error("Failed to load thumbnails", err);
         setErrorMsg("Network Error: Could not connect to the backend server.");
+        setPhase("error");
       } finally {
         setLoadingThumbnails(false);
       }
@@ -102,18 +115,19 @@ export default function UploadPage() {
 
   const removeFile = () => {
     setFile(null);
+    setBlobUrl(null);
     setPhase("idle");
     setErrorMsg(null);
   };
 
   const processUpload = async () => {
-    if (!file) return;
+    if (!file || !blobUrl) return;
     setPhase("uploading");
     setErrorMsg(null);
 
     try {
       const formData = new FormData();
-      formData.append("file", file);
+      formData.append("file_url", blobUrl);
       
       // Convert sets to range strings for backend
       const tableRange = Array.from(selectedTables).sort((a,b) => a-b).join(",");
