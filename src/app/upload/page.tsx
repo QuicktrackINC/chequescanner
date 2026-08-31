@@ -73,7 +73,7 @@ export default function UploadPage() {
         // 1. Upload to Vercel Blob
         const blob = await upload(selectedFile.name, selectedFile, {
           access: 'public',
-          handleUploadUrl: '/api/upload',
+          handleUploadUrl: '/blob-upload',
         });
         
         setBlobUrl(blob.url);
